@@ -1,3 +1,4 @@
 # update apk
-apk update
-
+sudo apk update
+sudo apk upgrade
+sudo apk add nginx
