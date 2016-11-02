@@ -1,0 +1,130 @@
+#cloud-config
+
+#ssh_authorized_keys:
+#  - ssh-rsa AAAAB3Nza...(sshする時の公開鍵)
+
+coreos:
+  update:
+    reboot-strategy: best-effort
+  units:
+    - name: docker.service
+      command: start
+
+    - name: timezone.service
+      command: start
+      content: |
+        [Unit]
+        Description=timezone
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStart=/usr/bin/ln -sf ../usr/share/zoneinfo/Japan /etc/localtime
+
+    - name: nginx-proxy.service
+      command: start
+      content: |
+        [Unit]
+        Description=nginx-proxy
+
+        [Service]
+        Type=simple
+        Restart=always
+        ExecStartPre=-/usr/bin/docker stop nginx-proxy
+        ExecStart=/usr/bin/docker run \
+                    --rm \
+                    --name="nginx-proxy" \
+                    -p 80:80 \
+                    -p 443:443 \
+                    -v /home/core/certs:/etc/nginx/certs:ro \
+                    -v /etc/nginx/vhost.d \
+                    -v /usr/share/nginx/html \
+                    -v /var/run/docker.sock:/tmp/docker.sock \
+                    jwilder/nginx-proxy
+        ExecStop=/usr/bin/docker stop nginx-proxy
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: letsencrypt.service
+      command: start
+      content: |
+        [Unit]
+        Description=letsencrypt
+        Requires=nginx-proxy.service
+        After=nginx-proxy.service
+
+        [Service]
+        Type=simple
+        Restart=always
+        ExecStartPre=-/usr/bin/docker stop letsencrypt
+        ExecStart=/usr/bin/docker run \
+                    --rm \
+                    --name="letsencrypt" \
+                    -v /home/core/certs:/etc/nginx/certs:rw \
+                    --volumes-from nginx-proxy \
+                    -v /var/run/docker.sock:/var/run/docker.sock:ro \
+                    jrcs/letsencrypt-nginx-proxy-companion
+        ExecStop=/usr/bin/docker stop letsencrypt
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: newrelic.service
+      command: start
+      content: |
+        [Unit]
+        Description=newrelic
+        Requires=docker.service
+        After=docker.service
+
+        [Service]
+        Restart=always
+        RestartSec=300
+        TimeoutStartSec=10m
+        ExecStartPre=-/usr/bin/docker stop newrelic
+        ExecStartPre=-/usr/bin/docker rm -f newrelic
+        ExecStartPre=-/usr/bin/docker pull uzyexe/newrelic:latest
+        ExecStart=/usr/bin/docker run \
+                    --rm \
+                    --name="newrelic" \
+                    --memory="64m" \
+                    --memory-swap="-1" \
+                    --net="host" \
+                    --pid="host" \
+                    --env="NEW_RELIC_LICENSE_KEY=ライセンスキー" \
+                    --volume="/var/run/docker.sock:/var/run/docker.sock:ro" \
+                    --volume="/sys/fs/cgroup/:/sys/fs/cgroup:ro" \
+                    --volume="/dev:/dev" \
+                    uzyexe/newrelic
+        ExecStop=/usr/bin/docker stop newrelic
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: docker-registry.service
+      command: start
+      content: |
+        [Unit]
+        Description=docker registry
+        Requires=docker.service
+        After=docker.service
+
+        [Service]
+        Restart=always
+        RestartSec=300
+        TimeoutStartSec=10m
+        ExecStart=/usr/bin/docker run \
+                    --rm \
+                    --name="docker-registry-service" \
+                    -p 5000:5000 \
+                    -e REGISTRY_STORAGE_S3_ACCESSKEY=アクセスキー \
+                    -e REGISTRY_STORAGE_S3_SECRETKEY=シークレット \
+                    -e REGISTRY_STORAGE_S3_BUCKET=バケット \
+                    -e REGISTRY_STORAGE_S3_REGION=ap-northeast-1 \
+                    -e REGISTRY_STORAGE_S3_ROOTDIRECTORY=/v2 \
+                    -e REGISTRY_STORAGE=s3 \
+                    registry:2.0
+        ExecStop=/usr/bin/docker stop docker-registry-service
+
+        [Install]
+        WantedBy=multi-user.target
