@@ -1,0 +1,3 @@
+# update apk
+apk update
+
